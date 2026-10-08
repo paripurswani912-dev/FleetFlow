@@ -1,7 +1,6 @@
-
 from datetime import datetime
 
-from sqlalchemy import String, Integer, Float, DateTime, ForeignKey
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -46,8 +45,14 @@ class Trip(Base):
         nullable=False,
     )
 
+    revenue: Mapped[float] = mapped_column(
+        Float,
+        default=0.0,
+        nullable=False,
+    )
+
     status: Mapped[str] = mapped_column(
-        String(20),
+        String(30),
         default="Draft",
         nullable=False,
     )

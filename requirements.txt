@@ -5,3 +5,6 @@ alembic
 pymysql
 pydantic-settings
 passlib[bcrypt]
+email-validator
+PyJWT
+python-multipart

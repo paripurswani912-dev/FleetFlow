@@ -1,34 +1,78 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.role import Role
-from app.schemas.role import RoleCreate, RoleResponse
+from app.schemas.role import RoleResponse
+from app.core.dependencies import get_current_user, require_roles
+from app.models.user import User
 
-router = APIRouter(prefix="/roles", tags=["Roles"])
+router = APIRouter(
+    prefix="/roles",
+    tags=["Roles"],
+)
+
+# 5 Fixed Predefined System Roles
+PREDEFINED_ROLES = [
+    (1, "Fleet Manager", "Fleet operations, vehicles, drivers, trips, maintenance, and operational reports."),
+    (2, "Driver", "Driver-specific assigned trip operations and status updates."),
+    (3, "Safety Officer", "Maintenance management, vehicle inspection, driver licensing, and safety compliance."),
+    (4, "Financial Analyst", "Fuel logs, expenses, financial analytics, trip profitability, and financial statements."),
+    (5, "System Administrator", "Full administrative control, user provisioning, role assignments, and security audit logs."),
+]
 
 
-@router.post("/", response_model=RoleResponse, status_code=201)
-def create_role(role_data: RoleCreate, db: Session = Depends(get_db)):
-    existing_role = db.query(Role).filter(
-        Role.name == role_data.name
-    ).first()
+def seed_predefined_roles(db: Session):
+    for role_id, name, desc in PREDEFINED_ROLES:
+        existing = db.query(Role).filter(Role.id == role_id).first()
+        if not existing:
+            new_role = Role(id=role_id, name=name, description=desc)
+            db.add(new_role)
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
 
-    if existing_role is not None:
+
+@router.post(
+    "/",
+    status_code=403,
+)
+def create_role():
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Creating custom roles is disabled. FleetFlow relies on predefined system roles.",
+    )
+
+
+@router.get(
+    "/",
+    response_model=list[RoleResponse],
+)
+def get_roles(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    seed_predefined_roles(db)
+    return db.query(Role).order_by(Role.id).all()
+
+
+@router.get(
+    "/{role_id}",
+    response_model=RoleResponse,
+)
+def get_role(
+    role_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    seed_predefined_roles(db)
+    role = db.query(Role).filter(Role.id == role_id).first()
+
+    if role is None:
         raise HTTPException(
-            status_code=409,
-            detail="Role already exists."
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Role not found.",
         )
 
-    role = Role(**role_data.model_dump())
-
-    db.add(role)
-    db.commit()
-    db.refresh(role)
-
     return role
-
-
-@router.get("/", response_model=list[RoleResponse])
-def get_roles(db: Session = Depends(get_db)):
-    return db.query(Role).order_by(Role.id).all()

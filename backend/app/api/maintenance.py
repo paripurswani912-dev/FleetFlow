@@ -6,7 +6,17 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.maintenance import Maintenance
 from app.models.vehicle import Vehicle
-from app.schemas.maintenance import MaintenanceCreate, MaintenanceResponse
+from app.schemas.maintenance import (
+    MaintenanceCreate,
+    MaintenanceResponse,
+)
+from app.core.audit import create_audit_log
+from app.core.dependencies import (
+    get_current_user,
+    require_roles,
+)
+from app.models.user import User
+
 
 router = APIRouter(
     prefix="/maintenance",
@@ -14,9 +24,16 @@ router = APIRouter(
 )
 
 
-@router.post("/", response_model=MaintenanceResponse, status_code=201)
+@router.post(
+    "/",
+    response_model=MaintenanceResponse,
+    status_code=201,
+)
 def create_maintenance(
     maintenance_data: MaintenanceCreate,
+    current_user: User = Depends(
+        require_roles(1, 3, 5)
+    ),
     db: Session = Depends(get_db),
 ):
     vehicle = db.query(Vehicle).filter(
@@ -32,40 +49,56 @@ def create_maintenance(
     if vehicle.status == "Retired":
         raise HTTPException(
             status_code=409,
-            detail="Cannot create maintenance for a retired vehicle.",
+            detail=(
+                "Retired vehicles cannot "
+                "be sent for maintenance."
+            ),
         )
 
     if vehicle.status == "On Trip":
         raise HTTPException(
             status_code=409,
-            detail="Cannot start maintenance while vehicle is on a trip.",
+            detail="Vehicle is currently on a trip.",
         )
 
     maintenance = Maintenance(
         **maintenance_data.model_dump(),
         status="Open",
-        started_at=datetime.now(),
     )
-
-    vehicle.status = "In Shop"
 
     db.add(maintenance)
 
-    try:
-        db.commit()
-        db.refresh(maintenance)
-    except Exception:
-        db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail="Maintenance creation failed.",
-        )
+    vehicle.status = "In Shop"
+
+    db.flush()
+
+    create_audit_log(
+        db=db,
+        user_id=current_user.id,
+        action="CREATE",
+        entity_type="Maintenance",
+        entity_id=maintenance.id,
+        description=(
+            f"Maintenance created for vehicle "
+            f"{vehicle.registration_number}."
+        ),
+    )
+
+    db.commit()
+    db.refresh(maintenance)
 
     return maintenance
 
-@router.patch("/{maintenance_id}/complete", response_model=MaintenanceResponse)
+
+@router.patch(
+    "/{maintenance_id}/complete",
+    response_model=MaintenanceResponse,
+)
 def complete_maintenance(
     maintenance_id: int,
+    current_user: User = Depends(
+        require_roles(1, 3, 5)
+    ),
     db: Session = Depends(get_db),
 ):
     maintenance = db.query(Maintenance).filter(
@@ -78,14 +111,11 @@ def complete_maintenance(
             detail="Maintenance record not found.",
         )
 
-    if maintenance.status != "Open":
+    if maintenance.status == "Completed":
         raise HTTPException(
             status_code=409,
-            detail="Only Open maintenance records can be completed.",
+            detail="Maintenance is already completed.",
         )
-
-    maintenance.status = "Completed"
-    maintenance.completed_at = datetime.now()
 
     vehicle = db.query(Vehicle).filter(
         Vehicle.id == maintenance.vehicle_id
@@ -97,34 +127,54 @@ def complete_maintenance(
             detail="Vehicle not found.",
         )
 
-    # Check whether another maintenance record is still open.
-    other_open_maintenance = db.query(Maintenance).filter(
-        Maintenance.vehicle_id == maintenance.vehicle_id,
-        Maintenance.status == "Open",
-        Maintenance.id != maintenance.id,
-    ).first()
+    maintenance.status = "Completed"
+    maintenance.completed_at = datetime.now()
 
-    if other_open_maintenance is None and vehicle.status != "Retired":
+    if vehicle.status != "Retired":
         vehicle.status = "Available"
 
-    try:
-        db.commit()
-        db.refresh(maintenance)
-    except Exception:
-        db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail="Maintenance completion failed.",
-        )
+    create_audit_log(
+        db=db,
+        user_id=current_user.id,
+        action="COMPLETE",
+        entity_type="Maintenance",
+        entity_id=maintenance.id,
+        description=(
+            f"Maintenance completed for vehicle "
+            f"{vehicle.registration_number}."
+        ),
+    )
+
+    db.commit()
+    db.refresh(maintenance)
 
     return maintenance
 
-@router.get("/", response_model=list[MaintenanceResponse])
-def get_maintenance_records(db: Session = Depends(get_db)):
-    return db.query(Maintenance).order_by(Maintenance.id).all()
-@router.get("/{maintenance_id}", response_model=MaintenanceResponse)
+
+@router.get(
+    "/",
+    response_model=list[MaintenanceResponse],
+)
+def get_maintenance_logs(
+    current_user: User = Depends(
+        get_current_user
+    ),
+    db: Session = Depends(get_db),
+):
+    return db.query(Maintenance).order_by(
+        Maintenance.id
+    ).all()
+
+
+@router.get(
+    "/{maintenance_id}",
+    response_model=MaintenanceResponse,
+)
 def get_maintenance(
     maintenance_id: int,
+    current_user: User = Depends(
+        get_current_user
+    ),
     db: Session = Depends(get_db),
 ):
     maintenance = db.query(Maintenance).filter(

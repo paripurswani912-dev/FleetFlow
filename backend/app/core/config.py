@@ -7,6 +7,9 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     DATABASE_URL: str = ""
 
+    JWT_SECRET_KEY: str = ""
+    JWT_ALGORITHM: str = "HS256"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

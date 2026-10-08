@@ -1,7 +1,6 @@
-
 from datetime import datetime
 
-from sqlalchemy import Integer, String, DateTime, ForeignKey, JSON
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -36,8 +35,8 @@ class AuditLog(Base):
         nullable=True,
     )
 
-    details: Mapped[dict | None] = mapped_column(
-        JSON,
+    description: Mapped[str | None] = mapped_column(
+        Text,
         nullable=True,
     )
 
